@@ -18,7 +18,7 @@
     .btn.secondary{background:#2a3446}
     .badge{font-size:12px;color:#fff;background:#2a3446;padding:2px 8px;border-radius:999px}
     .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
-    .card{background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;cursor: pointer;}
     .card.p{padding:12px;border:0}
     .card img{width:100%;height:200px;object-fit:cover;display:block}
     .small{font-size:12px;color:var(--muted)}
@@ -396,22 +396,15 @@ const UI = {
       const youRated = me ? await getUserRating(id, me.id) : null;
       const unlocked = me ? await isUnlocked(me.id, id) : false;
       const canWatch = !!me && (unlocked || (m.points_required||0)===0);
+      
+      const userPoints = me ? await getPoints(me.id) : 0;
 
       app.innerHTML = `
         <div class="flex" style="justify-content:space-between;">
           <div>
             <h1>${escapeHtml(m.title)}</h1>
             <div class="small">Rok: ${m.year||"?"} • Długość: ${m.duration||"?"} min</div>
-            ${m.points_required ? `
-    <div class="mt-2 alert">
-    Dostęp za: <b>${m.points_required}</b> pkt
-    ${me && !(await isUnlocked(me.id, m.id)) ? `
-      <button class="btn mt-2" onclick="UI.buyMovie(${m.id}, ${m.points_required})">
-        Kup dostęp
-      </button>
-    ` : ""}
-  </div>` : ""}
-
+            ${m.points_required ? `<div class="mt-2 alert">Wymagane punkty: <b>${m.points_required}</b> • Masz: <b>${userPoints}</b> pkt</div>` : ""}
           </div>
           <div class="flex">
             ${me ? `<button class="btn secondary" onclick="UI.onToggleWishlist(${m.id})">Chcę obejrzeć</button>` : ""}
@@ -422,7 +415,7 @@ const UI = {
 
         <div class="mt-4">
           ${me ? (canWatch ? `<a class="btn" href="#" onclick="UI.show('watch',{id:${m.id}})">Oglądaj</a>` :
-            `<button class="btn" onclick="UI.unlock(${m.id})">Odblokuj za punkty</button> <span class="small">Masz: <span id="myPoints">…</span> pkt</span>`) :
+            `<button class="btn" onclick="UI.unlock(${m.id})">Kup za ${m.points_required||0} pkt</button>`) :
             `<a class="btn" href="#" onclick="UI.show('login')">Zaloguj, aby oglądać</a>`}
         </div>
 
@@ -430,11 +423,11 @@ const UI = {
         <section class="mt-4">
           <h3>Oceny</h3>
           <div class="flex" style="gap:16px;align-items:center">
-            <div>Średnia: <strong>${avg?avg:'-'}</strong>/10 (${ratings.length || 0} ocen)</div>
+            <div>Średnia: <strong>${avg?avg:'-'}</strong>/5 (${ratings.length || 0} ocen)</div>
             ${me ? `
               <form class="flex" onsubmit="event.preventDefault(); UI.rate(${m.id}, this.score.value)">
                 <select name="score">
-                  ${Array.from({length:10},(_,i)=>i+1).map(i=>`<option value="${i}" ${youRated&&youRated.score===i?'selected':''}>${i}</option>`).join('')}
+                  ${Array.from({length:5},(_,i)=>i+1).map(i=>`<option value="${i}" ${youRated&&youRated.score===i?'selected':''}>${i} ⭐</option>`).join('')}
                 </select>
                 <button class="btn secondary">Oceń</button>
               </form>
@@ -458,12 +451,6 @@ const UI = {
           </div>
         </section>
       `;
-
-      // jeśli trzeba, doładuj punkty
-      if(me && m.points_required){
-        const pts = await getPoints(me.id);
-        const el = document.getElementById("myPoints"); if(el) el.textContent = pts;
-      }
     }
 
     // WATCH
@@ -639,7 +626,7 @@ const UI = {
   card(m, avg){
     if(!m) return "";
     return `<div class="card">
-      <a href="#" onclick="UI.show('movie',{id:${m.id}})"><img src="${m.thumb}" alt="${escapeHtml(m.title)}"></a>
+      <div onclick="UI.show('movie',{id:${m.id}})"><img src="${m.thumb}" alt="${escapeHtml(m.title)}"></div>
       <div class="card p">
         <div class="flex" style="justify-content:space-between;">
           <strong><a href="#" onclick="UI.show('movie',{id:${m.id}})">${escapeHtml(m.title)}</a></strong>
@@ -672,10 +659,11 @@ const UI = {
     const m = await getMovie(movieId);
     if((m.points_required||0)===0){ await ensureUnlocked(me.id, movieId); return UI.show('watch',{id:movieId}); }
     const have = await getPoints(me.id);
-    if(have < (m.points_required||0)) return toast("Za mało punktów");
+    if(have < (m.points_required||0)) return toast("❌ Masz za mało pkt!");
     await addPoints(me.id, -(m.points_required||0), `Odblokowanie: ${m.title}`);
     await ensureUnlocked(me.id, movieId);
-    toast("Odblokowano ✔️"); UI.show('watch',{id:movieId});
+    toast("✔️ Film odblokowany!"); 
+    UI.show('movie',{id:movieId});
   },
 
   async rate(movieId, score){
@@ -692,25 +680,6 @@ const UI = {
     await addComment(movieId, me.id, text.slice(0,2000));
     UI.show('movie',{id:movieId});
   },
-    async buyMovie(movieId, cost){
-    const me = await Auth.currentProfile();
-    if(!me) return UI.show("login");
-
-    const have = await getPoints(me.id);
-    if(have < cost){
-      return toast("❌ Masz za mało punktów");
-    }
-
-    // odejmij punkty
-    await addPoints(me.id, -cost, `Zakup filmu #${movieId}`);
-
-    // zapisz odblokowanie
-    await ensureUnlocked(me.id, movieId);
-
-    toast("✔️ Film odblokowany!");
-    UI.show("movie", { id: movieId }); // odśwież widok
-  },
-
 
   async saveBio(username){
     const me = await Auth.currentProfile(); if(!me) return;
